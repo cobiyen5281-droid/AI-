@@ -29,10 +29,9 @@ if not fred_key:
 
 # 抓取 FRED 數據
 @st.cache_data
-def get_fred_data(api_key):
-    pdr.pdr_override()
+def get_fred_data():
     tickers = {
-        'cpi': 'CPIAUCSL',      # 美國 CPI 年增率等或指數
+        'cpi': 'CPIAUCSL',      # 美國 CPI 指數
         'rate': 'GS10',         # 10年期公債殖利率
         'unemp': 'UNRATE',      # 美國失業率
         'fed': 'FEDFUNDS',      # 聯邦基金利率
@@ -41,35 +40,50 @@ def get_fred_data(api_key):
     }
     data = pd.DataFrame()
     for key, ticker in tickers.items():
-        data[key] = pdr.DataReader(ticker, 'fred', start='2020-01-01', api_key=api_key)
+        data[key] = pdr.DataReader(ticker, 'fred', start='2020-01-01')
     return data
 
 try:
-    df_fred = get_fred_data(fred_key)
-    latest_cpi = df_fred['cpi'].dropna().iloc[-1]
+    df_fred = get_fred_data()
+    # 計算 CPI 年增率 (YoY %)
+    df_fred['cpi_yoy'] = df_fred['cpi'].pct_change(periods=12) * 100
+    
+    latest_cpi_yoy = df_fred['cpi_yoy'].dropna().iloc[-1]
     latest_rate = df_fred['rate'].dropna().iloc[-1]
     latest_unemp = df_fred['unemp'].dropna().iloc[-1]
     latest_fed = df_fred['fed'].dropna().iloc[-1]
 except Exception as e:
-    st.error(f"數據讀取失敗，請確認 FRED API Key 是否正確。錯誤訊息：{e}")
+    st.error(f"數據讀取失敗，請稍後再試。錯誤訊息：{e}")
     st.stop()
 
-# 建立分頁
-tab1, tab2, tab3 = st.tabs(["🇺🇸 美國總體經濟指標", "🥇 黃金與全球市場", "📉 美債殖利率倒掛警示"])
+# 建立多個專業分頁
+tab1, tab2, tab3 = st.tabs([
+    "🇺🇸 美國總體經濟指標", 
+    "🥇 黃金與全球市場", 
+    "📉 美債殖利率倒掛警示"
+])
 
 with tab1:
     st.subheader("🇺🇸 美國總體經濟指標概覽")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("美國 10年期公債殖利率", f"{latest_rate:.2f}%")
-    col2.metric("美國失業率", f"{latest_unemp:.2f}%")
-    col3.metric("聯邦基金利率", f"{latest_fed:.2f}%")
+    col1.metric("美國 CPI 年增率", f"{latest_cpi_yoy:.2f}%")
+    col2.metric("10年期公債殖利率", f"{latest_rate:.2f}%")
+    col3.metric("美國失業率", f"{latest_unemp:.2f}%")
+    col4.metric("聯邦基金利率", f"{latest_fed:.2f}%")
     
     st.markdown("---")
-    st.subheader("📊 總經指標走勢圖")
-    fig_cpi = px.line(df_fred['rate'], title="美國 10 年期公債殖利率走勢")
-    st.plotly_chart(fig_cpi, use_container_width=True)
+    st.subheader("📊 總經指標歷史走勢圖")
+    
+    chart_col1, chart_col2 = st.columns(2)
+    with chart_col1:
+        fig_cpi = px.line(df_fred['cpi_yoy'].dropna(), title="美國 CPI 年增率走勢 (%)")
+        st.plotly_chart(fig_cpi, use_container_width=True)
+    with chart_col2:
+        fig_unemp = px.line(df_fred['unemp'].dropna(), title="美國失業率走勢 (%)")
+        st.plotly_chart(fig_unemp, use_container_width=True)
 
     # AI 月報專區
+    st.markdown("---")
     st.markdown("### 🤖 AI 總體經濟月報")
     if st.button("產生 AI 總體經濟摘要"):
         if not gemini_key:
@@ -78,7 +92,8 @@ with tab1:
             try:
                 client = genai.Client(api_key=gemini_key)
                 prompt = f"""
-                你是一位專業的總經經濟分析師。請根據以下最新的美國總體經濟數據，撰寫一份約 200 字的繁體中文總體經濟短評：
+                你是一位專業的總體經濟分析師。請根據以下最新的美國總體經濟數據，撰寫一份約 200 字的繁體中文總體經濟短評，分析目前的通膨、就業與利率環境：
+                - 美國 CPI 年增率：{latest_cpi_yoy:.2f}%
                 - 10年期美債殖利率：{latest_rate:.2f}%
                 - 美國失業率：{latest_unemp:.2f}%
                 - 聯邦基金利率：{latest_fed:.2f}%
@@ -93,24 +108,29 @@ with tab1:
                 st.error(f"生成摘要時發生錯誤：{e}")
 
 with tab2:
-    st.subheader("🥇 黃金與市場資產走勢")
-    st.markdown("追蹤全球避險資產黃金期貨 (`GC=F`) 近期走勢：")
+    st.subheader("🥇 黃金與全球避險資產走勢")
+    st.markdown("追蹤全球避險資產黃金期貨 (`GC=F`) 近一年走勢：")
     
     @st.cache_data
     def get_gold_data():
         gold = yf.download("GC=F", period="1y")
+        # 處理新版 yfinance 多層欄位索引問題
+        if isinstance(gold.columns, pd.MultiIndex):
+            gold.columns = gold.columns.get_level_values(0)
         return gold
     
     df_gold = get_gold_data()
-    if not df_gold.empty:
+    if not df_gold.empty and 'Close' in df_gold.columns:
+        latest_gold = df_gold['Close'].iloc[-1]
+        st.metric("最新黃金期貨價格 (USD)", f"${latest_gold:,.2f}")
         fig_gold = px.line(df_gold['Close'], title="黃金期貨近一年走勢 (Gold Futures)")
         st.plotly_chart(fig_gold, use_container_width=True)
     else:
-        st.warning("無法載入黃金數據")
+        st.warning("暫時無法載入黃金數據，請稍後重新整理。")
 
 with tab3:
     st.subheader("📉 美債殖利率曲線倒掛警示 (10Y - 2Y Spread)")
-    st.markdown("當 10 年期公債殖利率減去 2 年期公債殖利率小於 0 時，通常代表殖利率曲線倒掛，歷史上常被視為經濟衰退的前瞻指標。")
+    st.markdown("當 **10 年期公債殖利率** 減去 **2 年期公債殖利率** 小於 0 時，代表殖利率曲線倒掛，歷史上常被視為經濟衰退的前瞻預警指標。")
     
     df_spread = pd.DataFrame()
     df_spread['Spread'] = df_fred['dgs10'] - df_fred['dgs2']
@@ -119,10 +139,10 @@ with tab3:
     latest_spread = df_spread['Spread'].iloc[-1]
     
     if latest_spread < 0:
-        st.error(f"⚠️ 目前 10Y-2Y 利差為 **{latest_spread:.2f}%**：已發生殖利率倒掛，需留意經濟衰退風險！")
+        st.error(f"⚠️ 目前 10Y-2Y 利差為 **{latest_spread:.2f}%**：已發生殖利率倒掛，需留意潛在經濟衰退風險！")
     else:
-        st.success(f"✅ 目前 10Y-2Y 利差為 **{latest_spread:.2f}%**：殖利率曲線正常，無倒掛現象。")
+        st.success(f"✅ 目前 10Y-2Y 利差為 **{latest_spread:.2f}%**：殖利率曲線維持正斜率，目前無倒掛現象。")
         
-    fig_spread = px.line(df_spread['Spread'], title="美國 10 年期與 2 年期公債殖利率利差 (10Y - 2Y)")
-    fig_spread.add_hline(y=0, line_dash="dash", line_color="red")
+    fig_spread = px.line(df_spread['Spread'], title="美國 10 年期與 2 年期公債殖利率利差 (10Y - 2Y %)")
+    fig_spread.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="倒掛警戒線 (0%)")
     st.plotly_chart(fig_spread, use_container_width=True)
