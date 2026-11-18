@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import yfinance as yf
 from fredapi import Fred
+from google import genai
 
 # 頁面基本配置
 st.set_page_config(page_title="總體經濟與金融即時儀表板", layout="wide")
@@ -14,7 +15,7 @@ st.sidebar.header("⚙️ 設定與金鑰")
 # 優先使用 Streamlit Secrets，若無則讓學生在側邊欄輸入
 if "FRED_API_KEY" in st.secrets:
     fred_key = st.secrets["FRED_API_KEY"]
-    st.sidebar.success("已自動讀取 Secrets 中的 API Key！")
+    st.sidebar.success("已自動讀取 FRED API Key！")
 else:
     fred_key = st.sidebar.text_input("請輸入你的 FRED API Key:", type="password")
 
@@ -85,6 +86,37 @@ if fred_key:
             macro_choice = st.selectbox("選擇總體經濟指標：", macro_df.columns)
             fig2 = px.line(macro_df, y=macro_choice, title=f"{macro_choice} 近一年走勢")
             st.plotly_chart(fig2, use_container_width=True)
+
+        # 第三區塊：AI 總體經濟月報（新加入的功能）
+        st.write("---")
+        st.subheader("🤖 AI 總體經濟月報")
+        
+        if st.button("產生 AI 總體經濟摘要"):
+            if "GEMINI_API_KEY" not in st.secrets:
+                st.error("請先在 Streamlit Secrets 中設定 GEMINI_API_KEY！")
+            else:
+                with st.spinner("AI 分析師正在解讀最新總經數據..."):
+                    try:
+                        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+                        
+                        prompt = f"""
+                        你是一位專業的總體經濟分析師。請根據以下最新的美國總體經濟數據，撰寫一份約 200 字的繁體中文總體經濟短評，分析目前的通膨、就業與貨幣政策動向：
+                        - 最新 CPI 數值：{latest_cpi:.1f}
+                        - 10年期美債殖利率：{latest_rate:.2f}%
+                        - 美國失業率：{latest_unemp:.1f}%
+                        - 聯邦基金利率：{latest_fed:.2f}%
+                        """
+                        
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=prompt,
+                        )
+                        
+                        st.success("分析完成！")
+                        st.write(response.text)
+                        
+                    except Exception as e:
+                        st.error(f"生成摘要時發生錯誤：{e}")
 
     except Exception as e:
         st.error(f"數據讀取失敗，請確認 FRED API Key 是否正確。錯誤訊息: {e}")
