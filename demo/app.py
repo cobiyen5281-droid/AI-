@@ -89,8 +89,8 @@ with tab1:
         if not gemini_key:
             st.error("請先設定 GEMINI_API_KEY 才能使用 AI 分析功能！")
         else:
-            try:
-                client = genai.Client(api_key=gemini_key)
+            import time
+            with st.spinner("正在呼叫 AI 分析最新總經數據，若遇伺服器忙碌將自動重試..."):
                 prompt = f"""
                 你是一位專業的總體經濟分析師。請根據以下最新的美國總體經濟數據，撰寫一份約 200 字的繁體中文總體經濟短評，分析目前的通膨、就業與利率環境：
                 - 美國 CPI 年增率：{latest_cpi_yoy:.2f}%
@@ -98,14 +98,34 @@ with tab1:
                 - 美國失業率：{latest_unemp:.2f}%
                 - 聯邦基金利率：{latest_fed:.2f}%
                 """
-                response = client.models.generate_content(
-                    model="gemini-3.8-flash",
-                    contents=prompt,
-                )
-                st.success("分析完成！")
-                st.write(response.text)
-            except Exception as e:
-                st.error(f"生成摘要時發生錯誤：{e}")
+                
+                success = False
+                response = None
+                last_error = None
+                
+                # 自動重試 3 次，每次間隔 2 秒
+                for attempt in range(3):
+                    try:
+                        client = genai.Client(api_key=gemini_key)
+                        response = client.models.generate_content(
+                            model="gemini-3.8-flash",
+                            contents=prompt,
+                        )
+                        success = True
+                        break
+                    except Exception as e:
+                        last_error = e
+                        if "503" in str(e) and attempt < 2:
+                            time.sleep(2)  # 稍微等待 2 秒後自動重試
+                            continue
+                        else:
+                            break
+                
+                if success:
+                    st.success("分析完成！")
+                    st.write(response.text)
+                else:
+                    st.error(f"伺服器目前流量過大 (503)，自動重試後仍無法連線，請稍後再點擊一次按鈕。詳細錯誤：{last_error}")
 
 with tab2:
     st.subheader("🥇 黃金與全球避險資產走勢")
